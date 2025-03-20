@@ -4,77 +4,180 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Servidor de Live Node</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        video {
+            width: 80%;
+            max-width: 640px;
+            border-radius: 10px;
+            background: black;
+            display: block;
+            margin: 10px auto;
+        }
+        .controls {
+            margin-top: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            margin: 5px;
+        }
+        .start-btn {
+            background-color: green;
+            color: white;
+        }
+        .stop-btn {
+            background-color: red;
+            color: white;
+        }
+    </style>
 </head>
 <body>
     <h1>Bem-vindo à Live!</h1>
-    
+
     <video id="videoPreview" autoplay muted></video>
-    
-    <button onclick="startStream()">🎥 Iniciar Transmissão</button>
-    <button onclick="stopStream()">🛑 Parar Transmissão</button>
+
+    <div class="controls">
+        <button class="start-btn" onclick="startStream()">🎥 Iniciar Transmissão</button>
+        <button class="stop-btn" onclick="stopStream()">🛑 Parar Transmissão</button>
+    </div>
 
     <h2>Transmissão ao Vivo:</h2>
-    <video id="livePlayer" controls>
-        <source src="http://localhost:8080/hls/stream.m3u8" type="application/x-mpegURL">
-    </video>
+    <video id="livePlayer" controls></video>
 
     <script>
         let mediaRecorder;
         let stream;
         let ws;
-    
+        let reconnectInterval = null;
+
         async function startStream() {
             try {
-                // 🔹 Captura SOMENTE o vídeo para testar
                 stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: true, 
-                    audio: false  // 🔹 Desabilitando áudio temporariamente
+                    video: { width: 640, height: 480, frameRate: { ideal: 30, max: 60 } }, 
+                    audio: true  
                 });
-    
+
                 document.getElementById("videoPreview").srcObject = stream;
-    
-                ws = new WebSocket("ws://localhost:3001");
-    
-                ws.onopen = () => {
-                    console.log("✅ Conectado ao WebSocket!");
-    
-                    let options = { mimeType: "video/webm; codecs=vp8" }; 
-    
-                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                        console.warn("⚠️ Codec VP8 não suportado! Usando padrão.");
-                        options = {};
-                    }
-    
-                    mediaRecorder = new MediaRecorder(stream, options);
-    
-                    mediaRecorder.ondataavailable = (event) => {
-                        if (event.data.size > 0 && ws.readyState === 1) {
-                            ws.send(event.data);
-                        }
-                    };
-    
-                    mediaRecorder.start(100);
-                };
-    
-                ws.onerror = (error) => console.error("❌ Erro WebSocket:", error);
-    
+
+                connectWebSocket();
+
             } catch (error) {
                 alert("Erro ao acessar a webcam: " + error);
             }
         }
-    
+
+        function connectWebSocket() {
+            ws = new WebSocket("ws://localhost:3001");
+
+            ws.onopen = () => {
+                console.log("✅ Conectado ao WebSocket!");
+                startRecording();
+            };
+
+            ws.onerror = (error) => {
+                console.error("❌ Erro WebSocket:", error);
+                attemptReconnect();
+            };
+
+            ws.onclose = () => {
+                console.warn("⚠️ WebSocket desconectado.");
+                attemptReconnect();
+            };
+        }
+
+        function attemptReconnect() {
+            if (!reconnectInterval) {
+                reconnectInterval = setInterval(() => {
+                    console.log("🔄 Tentando reconectar...");
+                    connectWebSocket();
+                }, 3000);
+            }
+        }
+
+        function startRecording() {
+            let options = { mimeType: "video/webm; codecs=vp8,opus" }; 
+
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                console.warn("⚠️ Codec VP8+Opus não suportado! Usando VP9.");
+                options = { mimeType: "video/webm; codecs=vp9" };
+            }
+
+            mediaRecorder = new MediaRecorder(stream, options);
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                    ws.send(event.data);
+                }
+            };
+
+            mediaRecorder.start(100);
+        }
+
         function stopStream() {
             if (mediaRecorder) {
                 mediaRecorder.stop();
             }
             if (ws) {
                 ws.close();
+                ws = null;
             }
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
+            clearInterval(reconnectInterval);
+            reconnectInterval = null;
         }
+
+        function playLiveStream() {
+            var video = document.getElementById("livePlayer");
+            var videoSrc = "http://localhost:8080/hls/stream.m3u8";
+
+            if (Hls.isSupported()) {
+                var hls = new Hls({
+                    liveSyncDuration: 1,  
+                    liveMaxLatencyDuration: 3,
+                    liveDurationInfinity: true,
+                    minAutoBitrate: 0, 
+                });
+
+                hls.loadSource(videoSrc);
+                hls.attachMedia(video);
+
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+
+                hls.on(Hls.Events.LEVEL_LOADED, function() {
+                    if (video.buffered.length > 0) {
+                        video.currentTime = video.buffered.end(0) - 0.1; // 🔹 Reduz delay ao vivo
+                    }
+                });
+
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = videoSrc;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+            } else {
+                alert("Seu navegador não suporta HLS!");
+            }
+        }
+
+        window.onload = playLiveStream;
     </script>
-    
 </body>
 </html>
