@@ -1,0 +1,23 @@
+# Usa a imagem oficial do Node.js e instala FFmpeg
+FROM node:18-alpine
+
+# Instala o FFmpeg manualmente no Alpine Linux
+RUN apk add --no-cache ffmpeg
+
+# Define o diretório de trabalho dentro do container
+WORKDIR /app
+
+# Copia os arquivos do package.json para instalar dependências antes
+COPY package.json package-lock.json ./
+
+# Instala as dependências do Node.js
+RUN npm install
+
+# Copia o restante do código para dentro do container
+COPY . .
+
+# Expõe as portas do servidor
+EXPOSE 3000 3001
+
+# Comando para iniciar o servidor
+CMD ["node", "server.js"]

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Servidor de Live Node</title>
+</head>
+<body>
+    <h1>Bem-vindo à Live!</h1>
+    
+    <video id="videoPreview" autoplay muted></video>
+    
+    <button onclick="startStream()">🎥 Iniciar Transmissão</button>
+    <button onclick="stopStream()">🛑 Parar Transmissão</button>
+
+    <h2>Transmissão ao Vivo:</h2>
+    <video id="livePlayer" controls>
+        <source src="http://localhost:8080/hls/stream.m3u8" type="application/x-mpegURL">
+    </video>
+
+    <script>
+        let mediaRecorder;
+        let stream;
+        let ws;
+    
+        async function startStream() {
+            try {
+                // 🔹 Captura SOMENTE o vídeo para testar
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: true, 
+                    audio: false  // 🔹 Desabilitando áudio temporariamente
+                });
+    
+                document.getElementById("videoPreview").srcObject = stream;
+    
+                ws = new WebSocket("ws://localhost:3001");
+    
+                ws.onopen = () => {
+                    console.log("✅ Conectado ao WebSocket!");
+    
+                    let options = { mimeType: "video/webm; codecs=vp8" }; 
+    
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        console.warn("⚠️ Codec VP8 não suportado! Usando padrão.");
+                        options = {};
+                    }
+    
+                    mediaRecorder = new MediaRecorder(stream, options);
+    
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0 && ws.readyState === 1) {
+                            ws.send(event.data);
+                        }
+                    };
+    
+                    mediaRecorder.start(100);
+                };
+    
+                ws.onerror = (error) => console.error("❌ Erro WebSocket:", error);
+    
+            } catch (error) {
+                alert("Erro ao acessar a webcam: " + error);
+            }
+        }
+    
+        function stopStream() {
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+            if (ws) {
+                ws.close();
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+        }
+    </script>
+    
+</body>
+</html>
